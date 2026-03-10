@@ -1,0 +1,1277 @@
+<!--
+  Sello AI — /public/ai.html
+  ─────────────────────────────────────────────────────────────────
+  OPTION A: Static HTML prototype (intentional — see refactor TODO)
+  TODO: Migrate to src/ai/ as proper React/TS components (Option B)
+        Reuse existing types.ts, dbService.ts, and design tokens.
+
+  DEPLOYMENT: Lives in /public/ → Vite copies it untouched to /dist/
+              Accessible at: https://your-site.netlify.app/ai.html
+              Calls /.netlify/functions/* on the same domain (no CORS).
+
+  LOCAL DEV:  Update BASE_URL in the <script> below to your Netlify
+              site URL, then open this file directly in a browser.
+  ─────────────────────────────────────────────────────────────────
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Sello AI</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+
+body{
+  font-family:'DM Sans',sans-serif;
+  min-height:100vh;height:100vh;
+  overflow:hidden;
+  display:flex;flex-direction:column;
+
+  /* Neutral grey-white gradient background */
+  background: linear-gradient(135deg,
+    #f1f2f4 0%,
+    #f8f9fa 30%,
+    #edf0f2 60%,
+    #f3f4f6 100%);
+}
+
+/* ambient noise texture */
+body::before{
+  content:'';position:fixed;inset:0;
+  background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+  pointer-events:none;z-index:0;
+}
+
+:root{
+  /* Glass tokens — v4 approved */
+  --glass-bg:        rgba(255,255,255,0.88);
+  --glass-border:    rgba(255,255,255,0.50);
+  --glass-blur:      blur(14px);
+  --glass-head-bg:   rgba(249,250,251,0.80);
+  --glass-row-even:  rgba(249,250,251,0.28);
+  --glass-row-hover: rgba(243,244,246,0.65);
+  --glass-divider:   rgba(229,231,235,0.55);
+
+  /* Theme — slate grey */
+  --theme:      #4b5563;
+  --theme-10:   rgba(75,85,99,0.10);
+  --theme-20:   rgba(75,85,99,0.20);
+  --theme-bg:   rgba(75,85,99,0.05);
+
+  /* Column tints */
+  --col-blue:  rgba(226,232,240,0.30);
+  --col-green: rgba(209,250,229,0.25);
+  --col-red:   rgba(254,226,226,0.22);
+
+  /* Unified metric colours */
+  --c-pos:  #059669;
+  --c-neg:  #dc2626;
+  --c-warn: #d97706;
+  --c-rev:  #4b5563;
+  --c-ca:   #6b7280;
+  --c-cost: #ea580c;
+  --c-num:  #374151;
+  --c-dim:  #9ca3af;
+
+  /* Ink */
+  --ink:    #111827;
+  --ink-2:  #374151;
+  --ink-3:  #6b7280;
+  --ink-4:  #9ca3af;
+
+  /* Surfaces */
+  --surface:    rgba(255,255,255,0.72);
+  --surface-2:  rgba(255,255,255,0.55);
+  --surface-3:  rgba(255,255,255,0.40);
+  --border:     rgba(229,231,235,0.70);
+  --border-2:   rgba(209,213,219,0.80);
+}
+
+/* ── TOPBAR ── */
+.topbar{
+  position:relative;z-index:10;
+  display:flex;align-items:center;gap:16px;
+  height:52px;flex-shrink:0;
+  background:var(--glass-bg);
+  backdrop-filter:var(--glass-blur);
+  -webkit-backdrop-filter:var(--glass-blur);
+  border-bottom:1px solid var(--glass-border);
+  padding:0 22px;
+  box-shadow:0 1px 12px rgba(79,70,229,.06);
+}
+.brand{display:flex;align-items:center;gap:10px}
+.brand-mark{
+  width:28px;height:28px;border-radius:8px;
+  background:var(--theme);
+  display:flex;align-items:center;justify-content:center;
+  box-shadow:0 2px 8px rgba(75,85,99,.30);
+}
+.brand-mark svg{width:14px;height:14px;color:#fff}
+.brand-name{font-size:15px;font-weight:700;color:var(--ink);letter-spacing:-.4px}
+.brand-badge{
+  font-size:9px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;
+  background:var(--theme-10);color:var(--theme);
+  border:1px solid var(--theme-20);
+  padding:2px 8px;border-radius:20px;
+}
+.top-sep{width:1px;height:20px;background:var(--border-2);flex-shrink:0}
+.top-context{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ink-3)}
+.ctx-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;transition:background .4s}
+.ctx-text{font-family:'DM Mono',monospace;font-size:11px}
+.top-right{margin-left:auto;display:flex;align-items:center;gap:8px}
+.data-status{
+  display:flex;align-items:center;gap:5px;
+  font-size:11px;color:var(--ink-3);
+  border:1px solid var(--border);
+  padding:4px 11px;border-radius:6px;
+  background:var(--surface-2);
+  backdrop-filter:var(--glass-blur);
+}
+.top-btn{
+  padding:5px 14px;border-radius:7px;font-size:12px;font-weight:500;
+  border:1px solid var(--border-2);background:var(--surface-2);
+  backdrop-filter:var(--glass-blur);
+  color:var(--ink-2);cursor:pointer;
+  font-family:'DM Sans',sans-serif;transition:all .15s;
+}
+.top-btn:hover{background:var(--glass-bg);border-color:var(--theme-20);color:var(--theme)}
+
+/* ── MAIN LAYOUT ── */
+.main{
+  display:grid;grid-template-columns:228px 1fr;
+  flex:1;overflow:hidden;position:relative;z-index:1;
+}
+
+/* ── SIDEBAR ── */
+.sidebar{
+  background:var(--glass-bg);
+  backdrop-filter:var(--glass-blur);
+  -webkit-backdrop-filter:var(--glass-blur);
+  border-right:1px solid var(--glass-border);
+  display:flex;flex-direction:column;overflow:hidden;
+  padding:18px 0;
+}
+.sidebar-section{padding:0 14px;margin-bottom:20px}
+.sidebar-label{
+  font-size:9.5px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--ink-4);padding:0 8px;margin-bottom:6px;
+}
+.sidebar-btn{
+  display:flex;align-items:center;gap:8px;width:100%;
+  padding:7px 8px;border-radius:7px;border:none;
+  background:transparent;color:var(--ink-3);
+  cursor:pointer;font-size:12px;font-weight:400;
+  font-family:'DM Sans',sans-serif;transition:all .13s;text-align:left;
+}
+.sidebar-btn svg{width:14px;height:14px;flex-shrink:0;opacity:.5}
+.sidebar-btn:hover{background:var(--surface-3);color:var(--ink-2)}
+.sidebar-btn.active{background:var(--theme-10);color:var(--theme)}
+.sidebar-btn.active svg{opacity:1}
+
+.sq-list{display:flex;flex-direction:column;gap:3px;padding:0 14px}
+.sq{
+  padding:7px 10px;border-radius:7px;
+  border:1px solid var(--glass-divider);
+  background:var(--surface-3);
+  font-size:11px;color:var(--ink-3);cursor:pointer;
+  font-family:'DM Sans',sans-serif;text-align:left;
+  transition:all .15s;line-height:1.45;
+}
+.sq:hover{background:var(--surface-2);border-color:var(--theme-20);color:var(--ink-2)}
+.sq:disabled{opacity:.35;cursor:not-allowed}
+
+.sidebar-footer{margin-top:auto;padding:14px 14px 0;border-top:1px solid var(--glass-divider)}
+.data-pill{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:8px 10px;border-radius:7px;
+  background:var(--surface-3);
+  border:1px solid var(--glass-divider);
+  margin-bottom:5px;
+}
+.dp-label{font-size:10px;color:var(--ink-4)}
+.dp-val{font-size:11px;font-weight:600;color:var(--ink-3);font-family:'DM Mono',monospace}
+.dp-val.ok{color:var(--c-pos)}.dp-val.warn{color:var(--c-warn)}.dp-val.bad{color:var(--c-neg)}
+
+/* ── CHAT AREA ── */
+.chat-area{
+  display:flex;flex-direction:column;overflow:hidden;
+  background:transparent;
+}
+.messages{
+  flex:1;overflow-y:auto;padding:32px 0;
+  display:flex;flex-direction:column;scroll-behavior:smooth;
+}
+.messages::-webkit-scrollbar{width:5px}
+.messages::-webkit-scrollbar-track{background:transparent}
+.messages::-webkit-scrollbar-thumb{background:rgba(79,70,229,.15);border-radius:3px}
+
+/* DB loading screen */
+.db-loading{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  flex:1;gap:20px;padding:40px;text-align:center;
+}
+.db-loading-icon{
+  width:54px;height:54px;border-radius:14px;
+  background:var(--glass-bg);
+  border:1px solid var(--glass-border);
+  backdrop-filter:var(--glass-blur);
+  box-shadow:0 4px 20px rgba(79,70,229,.12);
+  display:flex;align-items:center;justify-content:center;
+}
+.db-loading-icon svg{width:26px;height:26px;color:var(--theme)}
+.db-loading h3{font-size:17px;font-weight:600;color:var(--ink)}
+.db-loading p{font-size:13px;color:var(--ink-3);max-width:320px;line-height:1.6}
+.db-progress{
+  width:280px;height:3px;
+  background:rgba(79,70,229,.12);
+  border-radius:2px;overflow:hidden;
+}
+.db-progress-bar{height:100%;background:var(--theme);border-radius:2px;transition:width .4s ease;width:0%}
+.db-step{font-size:11px;color:var(--ink-4);font-family:'DM Mono',monospace}
+
+/* Error screen */
+.db-error{display:flex;flex-direction:column;align-items:center;justify-content:center;flex:1;gap:16px;padding:40px;text-align:center}
+.db-error h3{font-size:17px;font-weight:600;color:var(--c-neg)}
+.db-error p{font-size:13px;color:var(--ink-3);max-width:380px;line-height:1.6}
+.db-error-detail{
+  font-size:11px;font-family:'DM Mono',monospace;color:var(--ink-3);
+  background:var(--glass-bg);border:1px solid var(--border);
+  padding:8px 14px;border-radius:7px;max-width:420px;word-break:break-all;
+}
+.retry-btn{
+  padding:9px 22px;border-radius:8px;
+  background:var(--theme);color:#fff;border:none;
+  font-size:13px;font-weight:600;cursor:pointer;
+  font-family:'DM Sans',sans-serif;
+  box-shadow:0 2px 10px rgba(79,70,229,.3);
+  transition:opacity .15s;
+}
+.retry-btn:hover{opacity:.88}
+
+/* Welcome state */
+.welcome{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  flex:1;padding:40px;text-align:center;gap:24px;
+}
+.welcome-icon{
+  width:54px;height:54px;border-radius:14px;
+  background:var(--glass-bg);
+  border:1px solid var(--glass-border);
+  backdrop-filter:var(--glass-blur);
+  box-shadow:0 4px 20px rgba(79,70,229,.1);
+  display:flex;align-items:center;justify-content:center;
+}
+.welcome-icon svg{width:26px;height:26px;color:var(--theme)}
+.welcome h2{font-size:21px;font-weight:700;color:var(--ink);letter-spacing:-.4px}
+.welcome p{font-size:13px;color:var(--ink-3);line-height:1.65;max-width:400px}
+.welcome-chips{display:flex;flex-wrap:wrap;gap:7px;justify-content:center;max-width:580px}
+.wchip{
+  padding:9px 15px;border-radius:8px;
+  border:1px solid var(--glass-border);
+  background:var(--glass-bg);
+  backdrop-filter:var(--glass-blur);
+  font-size:12px;color:var(--ink-2);cursor:pointer;
+  font-family:'DM Sans',sans-serif;transition:all .15s;
+  box-shadow:0 1px 4px rgba(0,0,0,.05);
+}
+.wchip:hover{background:white;border-color:var(--theme-20);color:var(--theme);box-shadow:0 2px 10px rgba(79,70,229,.12)}
+
+/* Messages */
+.msg-row{display:flex;padding:10px 32px;animation:fadeUp .22s ease}
+@keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+.msg-row.user{justify-content:flex-end}
+.msg-row.assistant{justify-content:flex-start;align-items:flex-start;gap:12px}
+
+.user-bubble{
+  max-width:62%;
+  padding:11px 16px;border-radius:14px 14px 4px 14px;
+  background:var(--theme);color:#fff;
+  font-size:13px;line-height:1.55;
+  box-shadow:0 2px 10px rgba(79,70,229,.25);
+}
+
+.ai-avatar{
+  width:30px;height:30px;border-radius:9px;flex-shrink:0;margin-top:2px;
+  background:var(--glass-bg);
+  border:1px solid var(--glass-border);
+  backdrop-filter:var(--glass-blur);
+  box-shadow:0 1px 6px rgba(79,70,229,.12);
+  display:flex;align-items:center;justify-content:center;
+}
+.ai-avatar svg{width:14px;height:14px;color:var(--theme)}
+
+.ai-response{flex:1;max-width:780px;display:flex;flex-direction:column;gap:14px}
+
+/* Narrative */
+.ai-narrative{
+  font-size:13px;color:var(--ink-2);line-height:1.75;
+}
+.ai-narrative strong{color:var(--ink);font-weight:600}
+.ai-narrative .pos{color:var(--c-pos);font-weight:600}
+.ai-narrative .neg{color:var(--c-neg);font-weight:600}
+.ai-narrative .warn{color:var(--c-warn);font-weight:600}
+
+/* Cards */
+.insight-grid{display:grid;gap:8px}
+.insight-card{
+  padding:13px 15px;border-radius:10px;
+  background:var(--glass-bg);
+  backdrop-filter:var(--glass-blur);
+  border:1px solid var(--glass-border);
+  box-shadow:0 1px 6px rgba(0,0,0,.04);
+  display:flex;flex-direction:column;gap:4px;
+}
+.ic-label{font-size:9.5px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-4)}
+.ic-val{font-size:21px;font-weight:700;font-family:'DM Mono',monospace;color:var(--ink);letter-spacing:-.5px;line-height:1.2}
+.ic-val.pos{color:var(--c-pos)}.ic-val.neg{color:var(--c-neg)}.ic-val.warn{color:var(--c-warn)}.ic-val.acc{color:var(--theme)}
+.ic-sub{font-size:11px;color:var(--ink-4);margin-top:2px}
+
+/* Table */
+.ai-table-wrap{
+  border-radius:10px;overflow:hidden;
+  border:1px solid var(--glass-border);
+  box-shadow:0 2px 12px rgba(0,0,0,.05);
+}
+.ai-table-header{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:9px 14px;
+  background:var(--glass-head-bg);
+  backdrop-filter:var(--glass-blur);
+  border-bottom:1px solid var(--glass-divider);
+  font-size:11px;
+}
+.ath-title{font-weight:600;color:var(--ink-2)}
+.ath-count{color:var(--ink-4);font-family:'DM Mono',monospace}
+.ai-table{width:100%;border-collapse:collapse;font-size:12px;background:var(--glass-bg);backdrop-filter:var(--glass-blur)}
+.ai-table th{
+  padding:7px 12px;
+  font-size:9.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--ink-4);background:var(--glass-head-bg);
+  text-align:left;border-bottom:1px solid var(--glass-divider);white-space:nowrap;
+}
+.ai-table th.r{text-align:right}
+.ai-table td{
+  padding:8px 12px;
+  border-bottom:1px solid var(--glass-divider);
+  color:var(--ink-2);white-space:nowrap;vertical-align:middle;
+}
+.ai-table td.r{text-align:right}
+.ai-table tr:nth-child(even) td{background:var(--glass-row-even)}
+.ai-table tr:last-child td{border-bottom:none}
+.ai-table tr:hover td{background:var(--glass-row-hover)}
+
+/* Grade badges */
+.gb{
+  display:inline-flex;align-items:center;padding:1px 5px;
+  border-radius:3px;border:1px solid;
+  font-size:9px;font-weight:700;line-height:15px;
+  font-family:'DM Mono',monospace;
+}
+.g12{color:#059669;border-color:rgba(5,150,105,.2);background:rgba(5,150,105,.08)}
+.g3 {color:#4f46e5;border-color:rgba(79,70,229,.2);background:rgba(79,70,229,.08)}
+.g4 {color:#d97706;border-color:rgba(217,119,6,.2);background:rgba(217,119,6,.08)}
+.g5 {color:#dc2626;border-color:rgba(220,38,38,.2);background:rgba(220,38,38,.08)}
+
+/* Value classes */
+.v-pos {color:var(--c-pos);font-weight:600}
+.v-neg {color:var(--c-neg);font-weight:600}
+.v-warn{color:var(--c-warn);font-weight:600}
+.v-acc {color:var(--c-rev);font-weight:600;font-family:'DM Mono',monospace;font-size:11.5px}
+.v-num {color:var(--c-num);font-family:'DM Mono',monospace;font-size:11.5px}
+.v-dim {color:var(--c-dim)}
+
+/* Action badges */
+.badge{
+  display:inline-flex;align-items:center;
+  padding:2px 8px;border-radius:4px;border:1px solid;
+  font-size:9.5px;font-weight:600;white-space:nowrap;line-height:16px;letter-spacing:.04em;
+}
+.b-green {background:rgba(5,150,105,.08); color:#059669;border-color:rgba(5,150,105,.2)}
+.b-red   {background:rgba(220,38,38,.08); color:#dc2626;border-color:rgba(220,38,38,.2)}
+.b-amber {background:rgba(217,119,6,.08); color:#d97706;border-color:rgba(217,119,6,.2)}
+.b-gray  {background:rgba(107,114,128,.07);color:#6b7280;border-color:rgba(107,114,128,.18)}
+
+/* Action recommendation block */
+.action-block{
+  display:flex;align-items:flex-start;gap:13px;
+  padding:15px 17px;border-radius:10px;
+  background:var(--theme-10);
+  border:1px solid var(--theme-20);
+}
+.ab-icon{
+  width:34px;height:34px;border-radius:8px;
+  background:rgba(79,70,229,.14);
+  display:flex;align-items:center;justify-content:center;flex-shrink:0;
+}
+.ab-icon svg{width:17px;height:17px;color:var(--theme)}
+.ab-content{flex:1}
+.ab-title{font-size:13px;font-weight:600;color:var(--theme);margin-bottom:5px}
+.ab-body{font-size:12px;color:var(--ink-2);line-height:1.65}
+.ab-actions{display:flex;gap:7px;margin-top:11px}
+.ab-btn{
+  padding:5px 14px;border-radius:6px;font-size:12px;font-weight:600;
+  cursor:pointer;font-family:'DM Sans',sans-serif;transition:all .13s;border:1px solid;
+}
+.ab-btn.pri{background:var(--theme);color:#fff;border-color:var(--theme);box-shadow:0 2px 8px rgba(79,70,229,.25)}
+.ab-btn.pri:hover{opacity:.88}
+.ab-btn.sec{background:transparent;color:var(--theme);border-color:var(--theme-20)}
+.ab-btn.sec:hover{background:var(--theme-10)}
+
+/* Thinking dots */
+.ai-thinking{display:flex;align-items:center;gap:5px;padding:6px 2px}
+.ld{width:5px;height:5px;border-radius:50%;background:var(--theme);opacity:.3;animation:pulse 1.2s infinite}
+.ld:nth-child(2){animation-delay:.2s}.ld:nth-child(3){animation-delay:.4s}
+@keyframes pulse{0%,80%,100%{opacity:.2;transform:scale(.8)}40%{opacity:.9;transform:scale(1)}}
+
+/* ── INPUT BAR ── */
+.input-area{
+  padding:14px 32px 20px;
+  background:transparent;flex-shrink:0;
+}
+.input-wrap{
+  background:var(--glass-bg);
+  backdrop-filter:var(--glass-blur);
+  border:1px solid var(--glass-border);
+  border-radius:14px;
+  box-shadow:0 4px 20px rgba(0,0,0,.07), 0 1px 3px rgba(79,70,229,.08);
+  transition:border-color .15s, box-shadow .15s;
+}
+.input-wrap:focus-within{
+  border-color:rgba(79,70,229,.35);
+  box-shadow:0 4px 24px rgba(79,70,229,.15), 0 1px 3px rgba(79,70,229,.1);
+}
+.input-row{display:flex;align-items:flex-end;gap:10px;padding:11px 14px}
+#chat-input{
+  flex:1;background:transparent;border:none;outline:none;
+  font-size:13px;color:var(--ink);font-family:'DM Sans',sans-serif;
+  resize:none;min-height:22px;max-height:120px;line-height:1.55;
+}
+#chat-input::placeholder{color:var(--ink-4)}
+#chat-input:disabled{opacity:.5}
+.send-btn{
+  width:34px;height:34px;border-radius:8px;flex-shrink:0;
+  background:var(--theme);border:none;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  box-shadow:0 2px 8px rgba(79,70,229,.3);
+  transition:opacity .13s,transform .13s;
+}
+.send-btn:hover{opacity:.88;transform:scale(1.04)}
+.send-btn:disabled{opacity:.3;cursor:not-allowed;transform:none}
+.send-btn svg{width:14px;height:14px;color:#fff}
+.input-hint{
+  display:flex;align-items:center;gap:14px;
+  padding:6px 14px 8px;
+  font-size:11px;color:var(--ink-4);border-top:1px solid var(--glass-divider);
+}
+.hint-chip{
+  display:flex;align-items:center;gap:4px;cursor:pointer;
+  transition:color .13s;
+}
+.hint-chip:hover{color:var(--theme)}
+.hint-chip svg{width:11px;height:11px}
+</style>
+</head>
+<body>
+
+<!-- TOPBAR -->
+<div class="topbar">
+  <div class="brand">
+    <div class="brand-mark">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+    </div>
+    <span class="brand-name">Sello</span>
+    <span class="brand-badge">AI</span>
+  </div>
+  <div class="top-sep"></div>
+  <div class="top-context">
+    <div class="ctx-dot" id="ctx-dot" style="background:var(--ink-4)"></div>
+    <span class="ctx-text" id="ctx-text">Connecting…</span>
+  </div>
+  <div class="top-right">
+    <div class="data-status" id="data-status">
+      <svg width="9" height="9" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" fill="#9ca3af"/></svg>
+      Loading…
+    </div>
+    <button class="top-btn" onclick="newChat()">New chat</button>
+  </div>
+</div>
+
+<!-- MAIN -->
+<div class="main">
+
+  <!-- SIDEBAR -->
+  <div class="sidebar">
+    <div class="sidebar-section">
+      <div class="sidebar-label">Conversations</div>
+      <button class="sidebar-btn active" onclick="newChat()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+        New conversation
+      </button>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-label">Quick questions</div>
+    </div>
+    <div class="sq-list" id="sq-list">
+      <button class="sq" disabled onclick="askQuestion(this.textContent)">Which SKUs need a price increase?</button>
+      <button class="sq" disabled onclick="askQuestion(this.textContent)">What's dragging down my margin?</button>
+      <button class="sq" disabled onclick="askQuestion(this.textContent)">Show me top 5 revenue SKUs</button>
+      <button class="sq" disabled onclick="askQuestion(this.textContent)">Which products have low runway?</button>
+      <button class="sq" disabled onclick="askQuestion(this.textContent)">Which SKUs have a high return rate?</button>
+      <button class="sq" disabled onclick="askQuestion(this.textContent)">What should I prioritise today?</button>
+      <button class="sq" disabled onclick="askQuestion(this.textContent)">Compare platform performance</button>
+      <button class="sq" disabled onclick="askQuestion(this.textContent)">Show overstock risk products</button>
+    </div>
+    <div class="sidebar-footer">
+      <div class="data-pill"><span class="dp-label">SKUs</span><span class="dp-val" id="pill-skus">—</span></div>
+      <div class="data-pill"><span class="dp-label">Transactions</span><span class="dp-val" id="pill-txn">—</span></div>
+      <div class="data-pill"><span class="dp-label">Last updated</span><span class="dp-val" id="pill-updated">—</span></div>
+    </div>
+  </div>
+
+  <!-- CHAT -->
+  <div class="chat-area">
+    <div class="messages" id="messages"></div>
+
+    <div class="input-area">
+      <div class="input-wrap">
+        <div class="input-row">
+          <textarea id="chat-input" placeholder="Loading your data…" rows="1" disabled
+            onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
+          <button class="send-btn" id="send-btn" onclick="sendMessage()" disabled>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M22 2L11 13M22 2L15 22l-4-9-9-4 20-7z"/></svg>
+          </button>
+        </div>
+        <div class="input-hint">
+          <span>Try:</span>
+          <span class="hint-chip" onclick="askQuestion('Which SKUs have a runway under 4 weeks?')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg>
+            Runway alerts
+          </span>
+          <span class="hint-chip" onclick="askQuestion('What is my overall net margin?')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20V10M18 20V4M6 20v-6"/></svg>
+            Margin overview
+          </span>
+          <span class="hint-chip" onclick="askQuestion('Which products should I decrease price on?')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 7H4M20 12H4M20 17H4"/></svg>
+            Price actions
+          </span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ── CONFIG ──────────────────────────────────────────────────────
+// Deploy this file on the SAME Netlify domain as your Sello app.
+// For local dev only, replace with your site URL:
+const BASE_URL = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+  ? 'https://YOUR-SITE.netlify.app'
+  : '';
+
+const ENDPOINTS = {
+  snapshot:     `${BASE_URL}/.netlify/functions/db-pull`,
+  transactions: `${BASE_URL}/.netlify/functions/db-pull-transactions`,
+  refunds:      `${BASE_URL}/.netlify/functions/db-pull-refunds`
+};
+
+const LOOKBACK = 30;
+let DB = null, lastContext = null, dbReady = false;
+
+// ── STATUS HELPERS ───────────────────────────────────────────────
+function setStatus(dotColor, text, statusHtml) {
+  document.getElementById('ctx-dot').style.background = dotColor;
+  document.getElementById('ctx-text').textContent = text;
+  document.getElementById('data-status').innerHTML = statusHtml;
+}
+
+function showLoadingScreen(msg, pct, step) {
+  const m = document.getElementById('messages');
+  let el = document.getElementById('db-load-screen');
+  if (!el) {
+    m.innerHTML = `<div class="db-loading" id="db-load-screen">
+      <div class="db-loading-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+      </div>
+      <h3>Connecting to your data</h3>
+      <p id="db-load-msg">${msg}</p>
+      <div class="db-progress"><div class="db-progress-bar" id="db-pb" style="width:${pct}%"></div></div>
+      <span class="db-step" id="db-step">${step}</span>
+    </div>`;
+  } else {
+    document.getElementById('db-load-msg').textContent = msg;
+    document.getElementById('db-pb').style.width = pct + '%';
+    document.getElementById('db-step').textContent = step;
+  }
+}
+
+function showErrorScreen(title, detail) {
+  document.getElementById('messages').innerHTML = `<div class="db-error">
+    <h3>${title}</h3>
+    <p>Couldn't load your business data. Make sure this page is hosted on the same Netlify domain as your main Sello app, or update BASE_URL for local testing.</p>
+    ${detail ? `<div class="db-error-detail">${detail}</div>` : ''}
+    <button class="retry-btn" onclick="loadDatabase()">Retry</button>
+  </div>`;
+}
+
+// ── DB LOADER ────────────────────────────────────────────────────
+async function loadDatabase() {
+  dbReady = false;
+  document.getElementById('chat-input').disabled = true;
+  document.getElementById('send-btn').disabled = true;
+  document.querySelectorAll('.sq').forEach(b => b.disabled = true);
+  setStatus('#d97706', 'Connecting…', `<svg width="9" height="9" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" fill="#d97706"/></svg> Loading…`);
+
+  // Snapshot
+  showLoadingScreen('Loading product catalogue…', 15, 'step 1 / 3 — snapshot');
+  let snapshot, lastUpdatedAt;
+  try {
+    const r = await fetch(ENDPOINTS.snapshot);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const d = await r.json();
+    if (!d.success) throw new Error(d.error || 'Snapshot failed');
+    snapshot = d.snapshot || {}; lastUpdatedAt = d.lastUpdatedAt;
+  } catch(e) {
+    showErrorScreen('Could not load snapshot', e.message);
+    setStatus('#dc2626', 'Connection failed', `<svg width="9" height="9" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" fill="#dc2626"/></svg> Offline`);
+    return;
+  }
+
+  // Transactions (paginated)
+  showLoadingScreen('Loading transaction history…', 40, 'step 2 / 3 — transactions');
+  let allTxn = [];
+  try {
+    let page = 0, hasMore = true;
+    while (hasMore) {
+      const r = await fetch(`${ENDPOINTS.transactions}?page=${page}&pageSize=2000`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const d = await r.json();
+      if (!d.success) throw new Error(d.error);
+      allTxn = allTxn.concat(d.transactions || []);
+      hasMore = d.hasMore; page++;
+      showLoadingScreen(`Loading transactions… (${allTxn.length.toLocaleString()})`, Math.min(40+page*15,72), `step 2 / 3 — page ${page}`);
+    }
+  } catch(e) { console.warn('[txn]', e.message); }
+
+  // Refunds
+  showLoadingScreen('Loading returns & refunds…', 82, 'step 3 / 3 — refunds');
+  let allRefunds = [];
+  try {
+    const r = await fetch(ENDPOINTS.refunds);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const d = await r.json();
+    if (d.success) allRefunds = d.refunds || [];
+  } catch(e) { console.warn('[refunds]', e.message); }
+
+  showLoadingScreen('Building analytics…', 94, 'computing metrics');
+  DB = buildLiveDB(snapshot, allTxn, allRefunds, lastUpdatedAt);
+
+  // Update pills
+  document.getElementById('pill-skus').textContent = DB.products.length.toLocaleString();
+  document.getElementById('pill-skus').className = 'dp-val ok';
+  document.getElementById('pill-txn').textContent = allTxn.length.toLocaleString();
+  const upd = lastUpdatedAt
+    ? new Date(lastUpdatedAt).toLocaleDateString('en-GB',{day:'numeric',month:'short'})
+    : 'Unknown';
+  document.getElementById('pill-updated').textContent = upd;
+  document.getElementById('pill-updated').className = 'dp-val ok';
+
+  setStatus('#059669', `${DB.products.length} SKUs · ${allTxn.length.toLocaleString()} transactions`,
+    `<svg width="9" height="9" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" fill="#059669"/></svg> Live · ${upd}`);
+
+  dbReady = true;
+  document.getElementById('chat-input').disabled = false;
+  document.getElementById('chat-input').placeholder = 'Ask about your pricing, stock, margins, returns…';
+  document.getElementById('send-btn').disabled = false;
+  document.querySelectorAll('.sq').forEach(b => b.disabled = false);
+  showWelcome();
+}
+
+// ── METRICS ENGINE ───────────────────────────────────────────────
+function buildLiveDB(snapshot, transactions, refunds, lastUpdatedAt) {
+  const products = snapshot.products || [];
+  const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - LOOKBACK);
+  const prevCutoff = new Date(cutoff); prevCutoff.setDate(prevCutoff.getDate() - LOOKBACK);
+
+  const txnMap = {}, refundMap = {};
+  for (const t of transactions) {
+    if (!t.sku) continue;
+    (txnMap[t.sku] = txnMap[t.sku] || []).push(t);
+  }
+  for (const r of refunds) {
+    if (!r.sku) continue;
+    (refundMap[r.sku] = refundMap[r.sku] || []).push(r);
+  }
+
+  const enriched = products.map(p => {
+    const skuTxns = txnMap[p.sku] || [];
+    const skuRefs  = refundMap[p.sku] || [];
+
+    const recent = skuTxns.filter(t => new Date(t.date) >= cutoff);
+    const prev   = skuTxns.filter(t => { const d=new Date(t.date); return d>=prevCutoff && d<cutoff; });
+
+    const units30d   = recent.reduce((s,t)=>s+(t.velocity||0),0);
+    const revenue30d = recent.reduce((s,t)=>s+(t.price||0)*(t.velocity||0),0);
+    const profit30d  = recent.reduce((s,t)=> t.profit!=null ? s+t.profit : s+(t.price||0)*(t.velocity||0)*((t.margin||0)/100),0);
+    const adSpend30d = recent.reduce((s,t)=>s+(t.adsSpend||0),0);
+    const prevUnits  = prev.reduce((s,t)=>s+(t.velocity||0),0);
+
+    const dailyVel = p.dailyAverageSales > 0 ? p.dailyAverageSales
+                   : p.averageDailySales > 0 ? p.averageDailySales
+                   : units30d / LOOKBACK;
+    const prevDailyVel = prevUnits / LOOKBACK;
+    const velChangePct = prevDailyVel > 0 ? ((dailyVel-prevDailyVel)/prevDailyVel)*100 : 0;
+
+    const stock = p.stockLevel || 0;
+    const runwayDays  = dailyVel > 0 ? stock/dailyVel : 999;
+    const runwayWeeks = runwayDays / 7;
+    const netMarginPct = revenue30d > 0 ? (profit30d/revenue30d)*100 : (p.costDetail?.profitInclRnPct||0);
+
+    const refund30d    = skuRefs.filter(r => new Date(r.date) >= cutoff);
+    const refundUnits  = refund30d.reduce((s,r)=>s+(r.quantity||0),0);
+    const refundRate   = units30d > 0 ? (refundUnits/units30d)*100 : 0;
+    const tacos        = revenue30d > 0 && adSpend30d > 0 ? (adSpend30d/revenue30d)*100 : 0;
+
+    const recPrice = p.optimalPrice || p.currentPrice;
+    const action = recPrice > p.currentPrice*1.01 ? 'INCREASE'
+                 : recPrice < p.currentPrice*0.99 ? 'DECREASE' : 'MAINTAIN';
+    const platform = (p.channels&&p.channels[0]?.platform) || (recent[0]?.platform) || 'Unknown';
+    const cd = p.costDetail || {};
+
+    return {
+      ...p, units30d, revenue30d, profit30d, adSpend30d,
+      netMarginPct, dailyVel, runwayWeeks, runwayDays,
+      refundRate, tacos, velChangePct, recPrice, action, platform,
+      stock, cogs:cd.cogs||p.costPrice||0,
+      postage:cd.postage||p.postage||0,
+      sellingFee:cd.sellingFee||p.sellingFee||0
+    };
+  }).filter(p=>p.sku);
+
+  const totalRev    = enriched.reduce((s,p)=>s+p.revenue30d,0);
+  const totalProfit = enriched.reduce((s,p)=>s+p.profit30d,0);
+  const totalUnits  = enriched.reduce((s,p)=>s+p.units30d,0);
+  const avgMargin   = totalRev > 0 ? (totalProfit/totalRev)*100 : 0;
+
+  const byPlatform = {};
+  for (const p of enriched) {
+    const pl = p.platform||'Unknown';
+    if (!byPlatform[pl]) byPlatform[pl]={rev:0,profit:0,units:0,skus:0,adSpend:0};
+    byPlatform[pl].rev+=p.revenue30d; byPlatform[pl].profit+=p.profit30d;
+    byPlatform[pl].units+=p.units30d; byPlatform[pl].adSpend+=p.adSpend30d;
+    byPlatform[pl].skus++;
+  }
+  for (const pl of Object.keys(byPlatform)) {
+    const b=byPlatform[pl];
+    b.margin=b.rev>0?(b.profit/b.rev)*100:0;
+    b.tacos =b.rev>0&&b.adSpend>0?(b.adSpend/b.rev)*100:0;
+  }
+
+  return { products:enriched, transactions, refunds, summary:{totalRev,totalProfit,totalUnits,avgMargin}, byPlatform, lastUpdatedAt };
+}
+
+// ── FORMATTERS ───────────────────────────────────────────────────
+const fmt = {
+  gbp:  v => `£${Number(v).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2})}`,
+  pct:  v => `${Number(v).toFixed(1)}%`,
+  num:  v => Number(v).toLocaleString('en-GB'),
+  wks:  v => `${Number(v).toFixed(1)} wks`,
+  trunc:(s,n)=>s&&s.length>n?s.slice(0,n)+'…':(s||''),
+  runwayTone: r => r<3?'neg':r<6?'warn':'pos',
+  marginTone: m => m<10?'neg':m<18?'warn':'pos',
+  returnTone: r => r>12?'neg':r>6?'warn':'pos',
+  tacosTone:  t => t>20?'neg':t>10?'warn':'pos'
+};
+
+// ── INTENT DETECTION ─────────────────────────────────────────────
+function detectIntent(q) {
+  const t=q.toLowerCase(), has=(...w)=>w.some(x=>t.includes(x));
+  if(has('hello','hi ','hey ','how are')) return {type:'GREETING'};
+  if(has('those','them','these','that','they')&&lastContext) return {type:'FOLLOWUP',raw:t};
+  if(has('priorit','today','right now','what should','focus','most important','urgent')) return {type:'PRIORITY'};
+  if((has('compare','vs','versus')&&has('amazon','ebay','etsy','platform'))||has('platform breakdown','platform comparison','platform performance')) return {type:'PLATFORM_COMPARE'};
+  if(has('increase','raise')&&has('price','sku','product')) return {type:'PRICE_INCREASE'};
+  if(has('decrease','lower','reduce','cut')&&has('price','sku','product')) return {type:'PRICE_DECREASE'};
+  if(has('price action','price change','reprice','pricing recommendation','all recommendation')) return {type:'PRICE_ALL'};
+  if(has('out of stock','stockout','oos')) return {type:'STOCKOUT'};
+  if(has('overstock','excess stock','too much stock')) return {type:'OVERSTOCK'};
+  if(has('runway','days remaining','weeks remaining','stock cover')) return {type:'RUNWAY'};
+  if(has('stock level','inventory','stock')) return {type:'STOCK'};
+  if(has('return rate','high return','refund rate','returns','refunds')) return {type:'RETURNS'};
+  if(has('worst margin','lowest margin','bad margin','negative margin','loss making','losing money','dragging')) return {type:'MARGIN_LOW'};
+  if(has('best margin','highest margin','top margin','most profitable')) return {type:'MARGIN_HIGH'};
+  if(has('margin','profit')) return {type:'MARGIN_OVERVIEW'};
+  if(has('top','best','highest')&&has('revenue','sales','selling')) return {type:'TOP_REVENUE'};
+  if(has('worst','lowest','least')&&has('revenue','sales','selling')) return {type:'BOTTOM_REVENUE'};
+  if(has('revenue','sales','turnover')) return {type:'REVENUE_OVERVIEW'};
+  if(has('ad spend','ads','tacos','advertising')) return {type:'ADS'};
+  const sm=q.match(/\b([A-Z]{2}\d{3,4}[A-Z0-9\-]*)\b/i);
+  if(sm) return {type:'SKU_LOOKUP',sku:sm[1].toUpperCase()};
+  return {type:'OVERVIEW'};
+}
+
+// ── RESPONSE BUILDERS ────────────────────────────────────────────
+function buildOverview() {
+  const p=DB.products, s=DB.summary;
+  const critical=p.filter(x=>x.runwayWeeks<3&&x.stock>0).length;
+  const oos=p.filter(x=>x.stock<=0).length;
+  const lowM=p.filter(x=>x.netMarginPct<12&&x.revenue30d>0).length;
+  const highR=p.filter(x=>x.refundRate>8&&x.units30d>0).length;
+  const needsInc=p.filter(x=>x.action==='INCREASE').length;
+  return {
+    narrative:`Your portfolio of <strong>${p.length} SKUs</strong> generated <strong>${fmt.gbp(s.totalRev)}</strong> over the last 30 days at a blended margin of <span class="${s.avgMargin>=18?'pos':s.avgMargin>=10?'warn':'neg'}">${fmt.pct(s.avgMargin)}</span>. ${oos>0?`<span class="neg">${oos} SKU${oos>1?'s are':' is'} out of stock.</span> `:''}${critical>0?`<span class="neg">${critical} SKU${critical>1?'s have':'has'} critical runway under 3 weeks.</span> `:''}${lowM>0?`<span class="warn">${lowM} SKUs are below 12% margin.</span> `:''}${needsInc} SKUs recommended for a price increase.`,
+    cards:[
+      {label:'30D Revenue',    value:fmt.gbp(s.totalRev),    sub:`${fmt.num(s.totalUnits)} units`,tone:'acc'},
+      {label:'Net Margin',     value:fmt.pct(s.avgMargin),   sub:'blended 30D',tone:fmt.marginTone(s.avgMargin)},
+      {label:'Critical Runway',value:critical.toString(),    sub:'under 3 weeks',tone:critical>0?'neg':'pos'},
+      {label:'Low Margin',     value:lowM.toString(),        sub:'below 12%',tone:lowM>0?'warn':'pos'},
+      {label:'High Returns',   value:highR.toString(),       sub:'above 8%',tone:highR>0?'warn':'pos'}
+    ]
+  };
+}
+
+function buildGreeting() {
+  const s=DB.summary;
+  return {
+    narrative:`Hi! I'm your Sello AI analyst. I've loaded <strong>${DB.products.length} SKUs</strong> with ${fmt.num(DB.transactions.length)} transactions from your live database. Your 30-day revenue is <strong>${fmt.gbp(s.totalRev)}</strong> at <span class="${fmt.marginTone(s.avgMargin)==='pos'?'pos':'warn'}">${fmt.pct(s.avgMargin)}</span> blended margin. Ask me anything.`,
+    cards:[
+      {label:'SKUs',          value:DB.products.length.toString(),  sub:'in catalogue',tone:'neutral'},
+      {label:'30D Revenue',   value:fmt.gbp(s.totalRev),            sub:'all platforms',tone:'acc'},
+      {label:'Net Margin',    value:fmt.pct(s.avgMargin),           sub:'blended',tone:fmt.marginTone(s.avgMargin)},
+      {label:'Transactions',  value:fmt.num(DB.transactions.length),sub:'on record',tone:'neutral'}
+    ]
+  };
+}
+
+function buildPriority() {
+  const scored=DB.products.map(x=>{
+    let score=0,reasons=[];
+    if(x.stock<=0)              {score+=50;reasons.push('out of stock');}
+    else if(x.runwayWeeks<3)    {score+=40;reasons.push('critical runway');}
+    else if(x.runwayWeeks<5)    {score+=20;reasons.push('low runway');}
+    if(x.netMarginPct<5)        {score+=30;reasons.push('very low margin');}
+    else if(x.netMarginPct<12)  {score+=15;reasons.push('low margin');}
+    if(x.refundRate>15)         {score+=20;reasons.push('very high returns');}
+    else if(x.refundRate>8)     {score+=10;reasons.push('elevated returns');}
+    if(x.action!=='MAINTAIN')   {score+=5; reasons.push(`${x.action.toLowerCase()} price`);}
+    if(x.stock>0&&x.runwayWeeks>20&&x.revenue30d<100){score+=8;reasons.push('potential dead stock');}
+    return {...x,urgencyScore:score,topReason:reasons[0]||'review'};
+  }).sort((a,b)=>b.urgencyScore-a.urgencyScore).slice(0,8);
+  lastContext=scored;
+  const top=scored[0];
+  return {
+    narrative:`Based on runway, margin and return rates across your ${DB.products.length} SKUs, here are your <strong>top priorities right now</strong>. ${top?`<span class="neg">${top.name} (${top.sku})</span> is most urgent — ${top.topReason}.`:''}`,
+    table:{
+      title:'Priority action list',
+      columns:[
+        {key:'sku',   label:'SKU',    align:'left'},
+        {key:'name',  label:'Product',align:'left'},
+        {key:'runway',label:'Runway', align:'right'},
+        {key:'margin',label:'Margin', align:'right'},
+        {key:'action',label:'Action', align:'center'},
+        {key:'why',   label:'Reason', align:'left'}
+      ],
+      rows:scored.map(x=>({
+        sku:x.sku,grade:x.gradeLevel,
+        name:fmt.trunc(x.name,26),
+        runway:x.stock<=0?'OOS':fmt.wks(x.runwayWeeks),
+        _runwayTone:x.stock<=0?'neg':fmt.runwayTone(x.runwayWeeks),
+        margin:x.revenue30d>0?fmt.pct(x.netMarginPct):'—',
+        _marginTone:fmt.marginTone(x.netMarginPct),
+        action:x.action,why:x.topReason
+      }))
+    },
+    action:top?{
+      title:`Immediate action: ${top.sku}`,
+      body:top.topReason==='out of stock'?`${top.sku} is out of stock — expedite a reorder immediately.`:top.topReason.includes('runway')?`${top.sku} has only ${fmt.wks(top.runwayWeeks)} runway. ${top.action==='INCREASE'?'A price increase will slow velocity and buy time.':'Expedite a reorder or find alternative stock.'}`:`${top.sku} needs attention: ${top.topReason}.`,
+      primaryCta:'Apply price changes',secondaryCta:'View all'
+    }:null
+  };
+}
+
+function buildPriceAction(filter) {
+  let skus=DB.products.filter(p=>p.revenue30d>0||p.stock>0);
+  if(filter) skus=skus.filter(x=>x.action===filter);
+  skus=[...skus].sort((a,b)=>Math.abs(b.recPrice-b.currentPrice)-Math.abs(a.recPrice-a.currentPrice));
+  lastContext=skus;
+  const top=skus[0];
+  let narrative='';
+  if(filter==='INCREASE') narrative=`<strong>${skus.length} SKUs</strong> are recommended for a price increase. ${top?`The biggest opportunity is <strong>${top.name}</strong> — from <span class="warn">${fmt.gbp(top.currentPrice)}</span> to <span class="pos">${fmt.gbp(top.recPrice)}</span>.`:''}`;
+  else if(filter==='DECREASE') narrative=`<strong>${skus.length} SKUs</strong> are recommended for a price decrease. ${top?`<strong>${top.name}</strong> has ${fmt.wks(top.runwayWeeks)} runway — reducing price will accelerate sell-through.`:''}`;
+  else {const inc=DB.products.filter(x=>x.action==='INCREASE').length,dec=DB.products.filter(x=>x.action==='DECREASE').length,mnt=DB.products.filter(x=>x.action==='MAINTAIN').length; narrative=`Portfolio summary: <span class="pos">${inc} increases recommended</span>, <span class="neg">${dec} decreases</span>, <span class="warn">${mnt} maintain</span>.`;}
+  return {
+    narrative,
+    cards:filter?[{label:`SKUs to ${filter.toLowerCase()}`,value:skus.length.toString(),tone:filter==='INCREASE'?'pos':'warn'}]:[
+      {label:'Increase',value:DB.products.filter(x=>x.action==='INCREASE').length.toString(),tone:'pos'},
+      {label:'Decrease',value:DB.products.filter(x=>x.action==='DECREASE').length.toString(),tone:'neg'},
+      {label:'Maintain',value:DB.products.filter(x=>x.action==='MAINTAIN').length.toString(),tone:'neutral'}
+    ],
+    table:{
+      title:filter?`Recommended: ${filter}`:'All price recommendations',
+      columns:[
+        {key:'sku',    label:'SKU',      align:'left'},
+        {key:'name',   label:'Product',  align:'left'},
+        {key:'current',label:'Current',  align:'right'},
+        {key:'rec',    label:'Rec Price',align:'right'},
+        {key:'delta',  label:'Change',   align:'right'},
+        {key:'action', label:'Action',   align:'center'}
+      ],
+      rows:skus.slice(0,20).map(x=>{
+        const d=x.recPrice-x.currentPrice;
+        return {sku:x.sku,grade:x.gradeLevel,name:fmt.trunc(x.name,24),current:fmt.gbp(x.currentPrice),rec:fmt.gbp(x.recPrice),delta:(d>=0?'+':'')+fmt.gbp(d),_deltaTone:d>0.01?'pos':d<-0.01?'neg':'neutral',action:x.action};
+      })
+    }
+  };
+}
+
+function buildRunway(tw) {
+  const t=tw||6;
+  const atRisk=DB.products.filter(x=>x.stock>0&&x.runwayWeeks<t).sort((a,b)=>a.runwayWeeks-b.runwayWeeks);
+  const oos=DB.products.filter(x=>x.stock<=0);
+  lastContext=[...oos,...atRisk];
+  const crit=atRisk.filter(x=>x.runwayWeeks<3);
+  let narrative='';
+  if(oos.length>0) narrative+=`<span class="neg">${oos.length} SKU${oos.length>1?'s are':' is'} out of stock.</span> `;
+  if(crit.length>0) narrative+=`<span class="neg">${crit.length} SKU${crit.length>1?'s have':'has'} critically low runway (under 3 weeks).</span> `;
+  narrative+=atRisk.length>0?`<strong>${atRisk.length} SKUs</strong> have less than ${t} weeks of stock at current velocity.`:`<span class="pos">All in-stock SKUs have healthy runway above ${t} weeks.</span>`;
+  return {
+    narrative,
+    cards:[
+      {label:'Out of Stock',    value:oos.length.toString(),                 tone:oos.length>0?'neg':'pos'},
+      {label:'Critical (<3w)', value:crit.length.toString(),                tone:crit.length>0?'neg':'pos'},
+      {label:`At Risk (<${t}w)`,value:atRisk.length.toString(),              tone:atRisk.length>0?'warn':'pos'}
+    ],
+    table:(oos.length>0||atRisk.length>0)?{
+      title:`SKUs with runway under ${t} weeks`,
+      columns:[
+        {key:'sku',   label:'SKU',     align:'left'},
+        {key:'name',  label:'Product', align:'left'},
+        {key:'runway',label:'Runway',  align:'right'},
+        {key:'stock', label:'Stock',   align:'right'},
+        {key:'vel',   label:'Daily',   align:'right'},
+        {key:'action',label:'Action',  align:'center'}
+      ],
+      rows:[...oos.map(x=>({...x,_oos:true})),...atRisk].slice(0,15).map(x=>({
+        sku:x.sku,grade:x.gradeLevel,name:fmt.trunc(x.name,26),
+        runway:x._oos?'OOS':fmt.wks(x.runwayWeeks),_runwayTone:x._oos?'neg':fmt.runwayTone(x.runwayWeeks),
+        stock:fmt.num(x.stock),vel:x.dailyVel.toFixed(2),action:x.action
+      }))
+    }:null,
+    action:crit.length>0?{title:'Reorder now',body:`${crit.slice(0,3).map(x=>x.sku).join(', ')} will stock out within 3 weeks. Raise prices to slow demand while you expedite a reorder.`,primaryCta:'Raise prices',secondaryCta:'View stock'}:null
+  };
+}
+
+function buildOverstock() {
+  const over=DB.products.filter(x=>x.runwayWeeks>16&&x.stock>0).sort((a,b)=>b.runwayWeeks-a.runwayWeeks);
+  lastContext=over;
+  const totalVal=over.reduce((s,x)=>s+x.stock*(x.currentPrice||0),0);
+  return {
+    narrative:`<strong>${over.length} SKUs</strong> have more than 16 weeks of runway. ${over[0]?`<span class="warn">${over[0].name}</span> has ${fmt.wks(over[0].runwayWeeks)} of cover.`:''} Estimated overstock value: <span class="warn">${fmt.gbp(totalVal)}</span>. Consider price reductions to accelerate sell-through.`,
+    cards:[{label:'Overstock SKUs',value:over.length.toString(),tone:over.length>0?'warn':'pos'},{label:'Est. Value',value:fmt.gbp(totalVal),sub:'at current price',tone:'warn'}],
+    table:over.length>0?{
+      title:'Potential overstock (>16 weeks)',
+      columns:[{key:'sku',label:'SKU',align:'left'},{key:'name',label:'Product',align:'left'},{key:'runway',label:'Runway',align:'right'},{key:'stock',label:'Stock',align:'right'},{key:'revenue',label:'30D Rev',align:'right'},{key:'action',label:'Action',align:'center'}],
+      rows:over.slice(0,15).map(x=>({sku:x.sku,grade:x.gradeLevel,name:fmt.trunc(x.name,26),runway:fmt.wks(x.runwayWeeks),_runwayTone:'warn',stock:fmt.num(x.stock),revenue:fmt.gbp(x.revenue30d),action:x.action}))
+    }:null
+  };
+}
+
+function buildMargin(mode) {
+  let base=DB.products.filter(x=>x.revenue30d>0);
+  if(!base.length) base=DB.products;
+  const sorted=[...base];
+  if(mode==='low') sorted.sort((a,b)=>a.netMarginPct-b.netMarginPct);
+  if(mode==='high') sorted.sort((a,b)=>b.netMarginPct-a.netMarginPct);
+  const skus=sorted.slice(0,10);
+  lastContext=skus;
+  const worst=[...base].sort((a,b)=>a.netMarginPct-b.netMarginPct)[0];
+  const best=[...base].sort((a,b)=>b.netMarginPct-a.netMarginPct)[0];
+  const s=DB.summary;
+  let narrative='';
+  if(mode==='low') narrative=`Lowest-margin SKU with sales: <span class="neg">${worst?.name}</span> at <span class="neg">${fmt.pct(worst?.netMarginPct||0)}</span>. Portfolio average: <strong>${fmt.pct(s.avgMargin)}</strong>. ${base.filter(x=>x.netMarginPct<0).length>0?`<span class="neg">${base.filter(x=>x.netMarginPct<0).length} SKUs are currently loss-making.</span>`:''}`;
+  else if(mode==='high') narrative=`Best-margin SKU with sales: <span class="pos">${best?.name}</span> at <span class="pos">${fmt.pct(best?.netMarginPct||0)}</span>. Keep these stocked and correctly priced. Portfolio average: <strong>${fmt.pct(s.avgMargin)}</strong>.`;
+  else narrative=`Portfolio net margin: <strong>${fmt.pct(s.avgMargin)}</strong>. Best: <span class="pos">${best?.name} at ${fmt.pct(best?.netMarginPct||0)}</span>. Worst: <span class="neg">${worst?.name} at ${fmt.pct(worst?.netMarginPct||0)}</span>. ${base.filter(x=>x.netMarginPct<10).length} SKUs below 10%.`;
+  return {
+    narrative,
+    cards:[
+      {label:'Portfolio Avg',value:fmt.pct(s.avgMargin),             tone:fmt.marginTone(s.avgMargin)},
+      {label:'Best Margin',  value:fmt.pct(best?.netMarginPct||0),  sub:best?.sku,tone:'pos'},
+      {label:'Worst Margin', value:fmt.pct(worst?.netMarginPct||0), sub:worst?.sku,tone:'neg'},
+      {label:'Below 10%',    value:base.filter(x=>x.netMarginPct<10).length.toString(),tone:'warn'}
+    ],
+    table:{
+      title:mode==='high'?'Highest margin SKUs':mode==='low'?'Lowest margin SKUs':'SKUs by margin',
+      columns:[{key:'sku',label:'SKU',align:'left'},{key:'name',label:'Product',align:'left'},{key:'margin',label:'Margin%',align:'right'},{key:'rev',label:'30D Rev',align:'right'},{key:'action',label:'Action',align:'center'}],
+      rows:skus.map(x=>({sku:x.sku,grade:x.gradeLevel,name:fmt.trunc(x.name,26),margin:fmt.pct(x.netMarginPct),_marginTone:fmt.marginTone(x.netMarginPct),rev:fmt.gbp(x.revenue30d),action:x.action}))
+    }
+  };
+}
+
+function buildReturns() {
+  const ws=DB.products.filter(x=>x.units30d>0);
+  const sorted=[...ws].sort((a,b)=>b.refundRate-a.refundRate);
+  lastContext=sorted.slice(0,10);
+  const worst=sorted[0];
+  const avgRate=ws.length>0?ws.reduce((s,x)=>s+x.refundRate,0)/ws.length:0;
+  return {
+    narrative:worst?`<span class="neg">${worst.name}</span> has the highest return rate at <span class="neg">${fmt.pct(worst.refundRate)}</span>. <strong>${sorted.filter(x=>x.refundRate>8).length} SKUs</strong> are above the 8% threshold. Portfolio average: <strong>${fmt.pct(avgRate)}</strong>.`:'No return rate data for this period.',
+    cards:[
+      {label:'Worst Return Rate',value:fmt.pct(worst?.refundRate||0),sub:worst?.sku,tone:'neg'},
+      {label:'Above 8%',value:sorted.filter(x=>x.refundRate>8).length.toString(),tone:'warn'},
+      {label:'Portfolio Avg',value:fmt.pct(avgRate),tone:fmt.returnTone(avgRate)}
+    ],
+    table:{
+      title:'Return rates by SKU',
+      columns:[{key:'sku',label:'SKU',align:'left'},{key:'name',label:'Product',align:'left'},{key:'rate',label:'Return%',align:'right'},{key:'units',label:'30D Units',align:'right'},{key:'platform',label:'Platform',align:'left'}],
+      rows:sorted.slice(0,12).map(x=>({sku:x.sku,grade:x.gradeLevel,name:fmt.trunc(x.name,26),rate:fmt.pct(x.refundRate),_rateTone:fmt.returnTone(x.refundRate),units:fmt.num(x.units30d),platform:x.platform}))
+    },
+    action:worst&&worst.refundRate>8?{title:'Investigate high-return SKUs',body:`${worst.sku} at ${fmt.pct(worst.refundRate)} is likely hurting profitability. Review listing accuracy, product images, packaging, and customer feedback.`,primaryCta:'View return details'}:null
+  };
+}
+
+function buildRevenue(mode) {
+  let sorted=[...DB.products].sort((a,b)=>b.revenue30d-a.revenue30d);
+  if(mode==='bottom') sorted.reverse();
+  const skus=sorted.slice(0,10);
+  lastContext=skus;
+  const top=skus[0]; const s=DB.summary;
+  return {
+    narrative:mode==='bottom'?`Lowest-revenue SKU: <span class="warn">${top?.name}</span> at <span class="warn">${fmt.gbp(top?.revenue30d||0)}</span> over 30 days. Consider reviewing these for markdown or delisting.`:`Top revenue driver: <span class="pos">${top?.name}</span> at <span class="acc">${fmt.gbp(top?.revenue30d||0)}</span> over 30 days (${fmt.num(top?.units30d||0)} units). Total portfolio: <strong>${fmt.gbp(s.totalRev)}</strong>.`,
+    cards:[
+      {label:'Total 30D Revenue',value:fmt.gbp(s.totalRev),sub:`${fmt.num(s.totalUnits)} units`,tone:'acc'},
+      {label:mode==='bottom'?'Lowest SKU':'Top SKU',value:fmt.gbp(top?.revenue30d||0),sub:top?.sku,tone:mode==='bottom'?'warn':'pos'}
+    ],
+    table:{
+      title:mode==='bottom'?'Lowest revenue SKUs (30D)':'Top revenue SKUs (30D)',
+      columns:[{key:'sku',label:'SKU',align:'left'},{key:'name',label:'Product',align:'left'},{key:'revenue',label:'30D Rev',align:'right'},{key:'units',label:'Units',align:'right'},{key:'margin',label:'Margin%',align:'right'},{key:'platform',label:'Platform',align:'left'}],
+      rows:skus.map(x=>({sku:x.sku,grade:x.gradeLevel,name:fmt.trunc(x.name,24),revenue:fmt.gbp(x.revenue30d),units:fmt.num(x.units30d),margin:fmt.pct(x.netMarginPct),_marginTone:fmt.marginTone(x.netMarginPct),platform:x.platform}))
+    }
+  };
+}
+
+function buildPlatformCompare() {
+  const bp=DB.byPlatform;
+  const platforms=Object.keys(bp).filter(k=>bp[k].rev>0).sort((a,b)=>bp[b].rev-bp[a].rev);
+  lastContext=platforms.map(k=>({platform:k,...bp[k]}));
+  if(!platforms.length) return {narrative:'No platform revenue data found for this period.'};
+  const best=platforms.reduce((b,k)=>bp[k].margin>(bp[b]?.margin||0)?k:b,platforms[0]);
+  return {
+    narrative:`<strong>${platforms[0]}</strong> drives the most revenue at <span class="acc">${fmt.gbp(bp[platforms[0]].rev)}</span>. <strong>${best}</strong> has the best margin at <span class="pos">${fmt.pct(bp[best].margin)}</span>. ${platforms.length>1?`Margin gap between best and worst: <span class="warn">${fmt.pct(Math.max(...platforms.map(k=>bp[k].margin))-Math.min(...platforms.map(k=>bp[k].margin)))}</span>.`:''}`,
+    cards:platforms.map(k=>({label:k,value:fmt.gbp(bp[k].rev),sub:`${fmt.pct(bp[k].margin)} margin · ${bp[k].skus} SKUs`,tone:fmt.marginTone(bp[k].margin)})),
+    table:{
+      title:'Platform breakdown (30D)',
+      columns:[{key:'platform',label:'Platform',align:'left'},{key:'revenue',label:'Revenue',align:'right'},{key:'profit',label:'Profit',align:'right'},{key:'margin',label:'Margin%',align:'right'},{key:'units',label:'Units',align:'right'},{key:'skus',label:'SKUs',align:'right'}],
+      rows:platforms.map(k=>({platform:k,revenue:fmt.gbp(bp[k].rev),profit:fmt.gbp(bp[k].profit),margin:fmt.pct(bp[k].margin),_marginTone:fmt.marginTone(bp[k].margin),units:fmt.num(bp[k].units),skus:bp[k].skus.toString()}))
+    }
+  };
+}
+
+function buildAds() {
+  const withAds=DB.products.filter(x=>x.adSpend30d>0).sort((a,b)=>b.adSpend30d-a.adSpend30d);
+  const totalAds=withAds.reduce((s,x)=>s+x.adSpend30d,0);
+  const s=DB.summary;
+  const portTacos=s.totalRev>0?(totalAds/s.totalRev)*100:0;
+  lastContext=withAds;
+  return {
+    narrative:`Total ad spend across <strong>${withAds.length} SKUs</strong>: <span class="warn">${fmt.gbp(totalAds)}</span> — portfolio TACoS of <strong>${fmt.pct(portTacos)}</strong>. ${withAds[0]?`<span class="warn">${withAds[0].name}</span> is the largest spender at ${fmt.gbp(withAds[0].adSpend30d)}.`:''}`,
+    cards:[{label:'Total Ad Spend',value:fmt.gbp(totalAds),sub:'30D',tone:'warn'},{label:'Portfolio TACoS',value:fmt.pct(portTacos),sub:'vs revenue',tone:fmt.tacosTone(portTacos)},{label:'SKUs with Ads',value:withAds.length.toString(),sub:`of ${DB.products.length}`,tone:'neutral'}],
+    table:withAds.length>0?{
+      title:'Ad spend by SKU',
+      columns:[{key:'sku',label:'SKU',align:'left'},{key:'name',label:'Product',align:'left'},{key:'spend',label:'Ad Spend',align:'right'},{key:'revenue',label:'Revenue',align:'right'},{key:'tacos',label:'TACoS%',align:'right'}],
+      rows:withAds.slice(0,12).map(x=>({sku:x.sku,grade:x.gradeLevel,name:fmt.trunc(x.name,24),spend:fmt.gbp(x.adSpend30d),revenue:fmt.gbp(x.revenue30d),tacos:fmt.pct(x.tacos),_tacosTone:fmt.tacosTone(x.tacos)}))
+    }:null
+  };
+}
+
+function buildSkuLookup(skuId) {
+  const x=DB.products.find(p=>p.sku?.toUpperCase()===skuId.toUpperCase()||p.sku?.toUpperCase().replace(/-UK$/,'')===skuId.toUpperCase().replace(/-UK$/,''));
+  if(!x) return {narrative:`No SKU matching <strong>${skuId}</strong> found in your loaded data.`};
+  lastContext=[x];
+  const skuTxns=DB.transactions.filter(t=>t.sku===x.sku);
+  return {
+    narrative:`<strong>${x.sku}</strong> — ${x.name}. Priced at <span class="acc">${fmt.gbp(x.currentPrice)}</span> on ${x.platform} with <span class="${fmt.marginTone(x.netMarginPct)==='pos'?'pos':fmt.marginTone(x.netMarginPct)==='warn'?'warn':'neg'}">${fmt.pct(x.netMarginPct)} net margin</span>. Runway: <span class="${x.stock>0?(fmt.runwayTone(x.runwayWeeks)==='neg'?'neg':fmt.runwayTone(x.runwayWeeks)==='warn'?'warn':'pos'):'neg'}">${x.stock>0?fmt.wks(x.runwayWeeks):'OUT OF STOCK'}</span>. Recommendation: <strong>${x.action}</strong>${x.action!=='MAINTAIN'?` → ${fmt.gbp(x.recPrice)}`:''}`,
+    cards:[
+      {label:'Current Price',value:fmt.gbp(x.currentPrice),sub:`Rec: ${fmt.gbp(x.recPrice)}`,tone:'acc'},
+      {label:'Net Margin',   value:fmt.pct(x.netMarginPct),  sub:'30D',tone:fmt.marginTone(x.netMarginPct)},
+      {label:'Runway',       value:x.stock>0?fmt.wks(x.runwayWeeks):'OOS',sub:`${fmt.num(x.stock)} units`,tone:x.stock<=0?'neg':fmt.runwayTone(x.runwayWeeks)},
+      {label:'30D Revenue',  value:fmt.gbp(x.revenue30d),    sub:`${fmt.num(x.units30d)} units`,tone:'neutral'},
+      {label:'Return Rate',  value:fmt.pct(x.refundRate),    tone:fmt.returnTone(x.refundRate)},
+      {label:'TACoS',        value:x.tacos>0?fmt.pct(x.tacos):'—',tone:x.tacos>0?fmt.tacosTone(x.tacos):'neutral'}
+    ],
+    table:{
+      title:`${x.sku} — data summary`,
+      columns:[{key:'item',label:'Metric',align:'left'},{key:'value',label:'Value',align:'right'}],
+      rows:[
+        {item:'Transactions on record',value:skuTxns.length.toString()},
+        {item:'Stock level',           value:fmt.num(x.stock)},
+        {item:'Daily velocity',        value:x.dailyVel.toFixed(2)+' units/day'},
+        {item:'COGS',                  value:x.cogs>0?fmt.gbp(x.cogs):'—'},
+        {item:'Postage',               value:x.postage>0?fmt.gbp(x.postage):'—'},
+        {item:'Selling fee',           value:x.sellingFee>0?fmt.gbp(x.sellingFee):'—'}
+      ]
+    },
+    action:x.action!=='MAINTAIN'?{title:`Recommended: ${x.action} to ${fmt.gbp(x.recPrice)}`,body:x.action==='INCREASE'?`Increasing to ${fmt.gbp(x.recPrice)} will improve margin${x.runwayWeeks<5?' and extend the low runway':''}.`:`With ${fmt.wks(x.runwayWeeks)} of runway, reducing to ${fmt.gbp(x.recPrice)} will accelerate sell-through.`,primaryCta:`Apply ${x.action.toLowerCase()}`,secondaryCta:'View history'}:null
+  };
+}
+
+function buildFollowUp(q) {
+  if(!lastContext||!Array.isArray(lastContext)||!lastContext.length) return {narrative:`No previous result to filter. Please ask a fresh question first.`};
+  const t=q.toLowerCase();
+  let filtered=[...lastContext],filterDesc='';
+  const platforms=Object.keys(DB.byPlatform);
+  const mp=platforms.find(p=>t.includes(p.toLowerCase()));
+  if(mp){filtered=filtered.filter(x=>(x.platform||'').toLowerCase().includes(mp.toLowerCase()));filterDesc=`on ${mp}`;}
+  else if(t.includes('high margin')){filtered=filtered.filter(x=>x.netMarginPct>20);filterDesc='with margin >20%';}
+  else if(t.includes('low margin')){filtered=filtered.filter(x=>x.netMarginPct<15);filterDesc='with margin <15%';}
+  else if(t.includes('margin')){filtered.sort((a,b)=>b.netMarginPct-a.netMarginPct);filterDesc='sorted by margin';}
+  else if(t.includes('revenue')){filtered.sort((a,b)=>b.revenue30d-a.revenue30d);filterDesc='sorted by revenue';}
+  else if(t.includes('runway')){filtered.sort((a,b)=>a.runwayWeeks-b.runwayWeeks);filterDesc='sorted by runway';}
+  if(!filtered.length) return {narrative:`None of the previous results match that filter.`};
+  lastContext=filtered;
+  return {
+    narrative:`From the previous results: <strong>${filtered.length} SKUs</strong> ${filterDesc}.`,
+    table:{
+      title:`Filtered: ${filterDesc}`,
+      columns:[{key:'sku',label:'SKU',align:'left'},{key:'name',label:'Product',align:'left'},{key:'revenue',label:'30D Rev',align:'right'},{key:'margin',label:'Margin%',align:'right'},{key:'action',label:'Action',align:'center'}],
+      rows:filtered.slice(0,15).map(x=>({sku:x.sku||x.platform,grade:x.gradeLevel,name:fmt.trunc(x.name||x.platform||'',26),revenue:fmt.gbp(x.revenue30d||x.rev||0),margin:fmt.pct(x.netMarginPct||x.margin||0),_marginTone:fmt.marginTone(x.netMarginPct||x.margin||0),action:x.action}))
+    }
+  };
+}
+
+// ── QUERY ROUTER ─────────────────────────────────────────────────
+function processQuery(q) {
+  if(!dbReady||!DB) return {narrative:'Data is still loading. Please wait.'};
+  const intent=detectIntent(q),t=q.toLowerCase();
+  switch(intent.type){
+    case 'GREETING':         return buildGreeting();
+    case 'OVERVIEW':         return buildOverview();
+    case 'PRIORITY':         return buildPriority();
+    case 'PLATFORM_COMPARE': return buildPlatformCompare();
+    case 'PRICE_INCREASE':   return buildPriceAction('INCREASE');
+    case 'PRICE_DECREASE':   return buildPriceAction('DECREASE');
+    case 'PRICE_MAINTAIN':   return buildPriceAction('MAINTAIN');
+    case 'PRICE_ALL':        return buildPriceAction(null);
+    case 'STOCKOUT':         return buildRunway(1);
+    case 'OVERSTOCK':        return buildOverstock();
+    case 'RUNWAY': case 'STOCK':{const wm=t.match(/(\d+)\s*weeks?/);return buildRunway(wm?parseInt(wm[1]):6);}
+    case 'MARGIN_LOW':       return buildMargin('low');
+    case 'MARGIN_HIGH':      return buildMargin('high');
+    case 'MARGIN_OVERVIEW':  return buildMargin(null);
+    case 'TOP_REVENUE':      return buildRevenue('top');
+    case 'BOTTOM_REVENUE':   return buildRevenue('bottom');
+    case 'REVENUE_OVERVIEW': return buildRevenue('top');
+    case 'RETURNS':          return buildReturns();
+    case 'ADS':              return buildAds();
+    case 'SKU_LOOKUP':       return buildSkuLookup(intent.sku);
+    case 'FOLLOWUP':         return buildFollowUp(q);
+    default:                 return buildOverview();
+  }
+}
+
+// ── RENDER ───────────────────────────────────────────────────────
+function toneClass(t){return{pos:'v-pos',neg:'v-neg',warn:'v-warn',acc:'v-acc',neutral:'v-num'}[t]||'v-num';}
+
+function renderResponse(data) {
+  let html='<div class="ai-response">';
+  if(data.narrative) html+=`<div class="ai-narrative">${data.narrative}</div>`;
+  if(data.cards&&data.cards.length>0){
+    html+=`<div class="insight-grid" style="grid-template-columns:repeat(${Math.min(data.cards.length,4)},1fr)">`;
+    for(const c of data.cards) html+=`<div class="insight-card"><div class="ic-label">${c.label}</div><div class="ic-val ${toneClass(c.tone)}">${c.value}</div>${c.sub?`<div class="ic-sub">${c.sub}</div>`:''}</div>`;
+    html+='</div>';
+  }
+  if(data.table&&data.table.rows&&data.table.rows.length>0){
+    html+=`<div class="ai-table-wrap"><div class="ai-table-header"><span class="ath-title">${data.table.title}</span><span class="ath-count">${data.table.rows.length} rows</span></div><table class="ai-table"><thead><tr>`;
+    for(const col of data.table.columns) html+=`<th class="${col.align==='right'?'r':''}">${col.label}</th>`;
+    html+='</tr></thead><tbody>';
+    for(const row of data.table.rows){
+      html+='<tr>';
+      for(const col of data.table.columns){
+        const val=row[col.key]??'–',align=col.align==='right'?'r':'';
+        let cell='';
+        if(col.key==='sku'){
+          const gc=row.grade?`<span class="gb ${row.grade<=2?'g12':row.grade===3?'g3':row.grade===4?'g4':'g5'}">G${row.grade}</span>`:'';
+          cell=`<span style="font-family:'DM Mono',monospace;font-size:11.5px;color:var(--ink);font-weight:500">${val}</span> ${gc}`;
+        } else if(col.key==='action'&&val!=='–'){
+          cell=`<span class="badge ${val==='INCREASE'?'b-green':val==='DECREASE'?'b-red':'b-gray'}">${val}</span>`;
+        } else if(col.key==='platform'){
+          cell=`<span style="font-size:11.5px;color:var(--ink-3)">${val}</span>`;
+        } else if(col.key==='why'||col.key==='item'){
+          cell=`<span style="font-size:12px;color:var(--ink-2)">${val}</span>`;
+        } else {
+          const tk=`_${col.key}Tone`;
+          const tone=row[tk]||(col.align==='right'?'neutral':null);
+          cell=tone?`<span class="${toneClass(tone)}">${val}`+`</span>`:`<span style="font-size:12px;color:var(--ink-2)">${val}</span>`;
+        }
+        html+=`<td class="${align}">${cell}</td>`;
+      }
+      html+='</tr>';
+    }
+    html+='</tbody></table></div>';
+  }
+  if(data.action){
+    html+=`<div class="action-block"><div class="ab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg></div><div class="ab-content"><div class="ab-title">${data.action.title}</div><div class="ab-body">${data.action.body}</div>${data.action.primaryCta||data.action.secondaryCta?`<div class="ab-actions">${data.action.primaryCta?`<button class="ab-btn pri">${data.action.primaryCta}</button>`:''}${data.action.secondaryCta?`<button class="ab-btn sec">${data.action.secondaryCta}</button>`:''}</div>`:''}</div></div>`;
+  }
+  html+='</div>';return html;
+}
+
+// ── UI HELPERS ───────────────────────────────────────────────────
+function autoResize(el){el.style.height='auto';el.style.height=Math.min(el.scrollHeight,120)+'px';}
+function handleKey(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMessage();}}
+function scrollToBottom(){const m=document.getElementById('messages');requestAnimationFrame(()=>m.scrollTop=m.scrollHeight);}
+function hideWelcome(){const w=document.getElementById('welcome');if(w)w.remove();}
+function askQuestion(q){if(!dbReady)return;document.getElementById('chat-input').value=q;sendMessage();}
+
+function showWelcome(){
+  const s=DB.summary;
+  document.getElementById('messages').innerHTML=`<div class="welcome" id="welcome">
+    <div class="welcome-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></div>
+    <h2>Your data is ready</h2>
+    <p><strong>${DB.products.length} SKUs</strong> loaded &middot; ${fmt.gbp(s.totalRev)} 30D revenue &middot; ${fmt.pct(s.avgMargin)} avg margin</p>
+    <div class="welcome-chips">
+      <button class="wchip" onclick="askQuestion(this.textContent)">Which SKUs need a price increase?</button>
+      <button class="wchip" onclick="askQuestion(this.textContent)">What's my worst-margin product?</button>
+      <button class="wchip" onclick="askQuestion(this.textContent)">Show products at stockout risk</button>
+      <button class="wchip" onclick="askQuestion(this.textContent)">Compare platform performance</button>
+      <button class="wchip" onclick="askQuestion(this.textContent)">Which products have a high return rate?</button>
+      <button class="wchip" onclick="askQuestion(this.textContent)">What should I prioritise today?</button>
+    </div>
+  </div>`;
+}
+
+function newChat(){lastContext=null;if(dbReady)showWelcome();}
+
+function sendMessage(){
+  const input=document.getElementById('chat-input');
+  const query=input.value.trim();
+  if(!query||!dbReady)return;
+  input.value='';input.style.height='auto';
+  hideWelcome();
+  const messages=document.getElementById('messages');
+  messages.insertAdjacentHTML('beforeend',`
+    <div class="msg-row user"><div class="user-bubble">${query.replace(/</g,'&lt;')}</div></div>
+    <div class="msg-row assistant" id="thinking-row">
+      <div class="ai-avatar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></div>
+      <div class="ai-thinking"><div class="ld"></div><div class="ld"></div><div class="ld"></div></div>
+    </div>
+  `);
+  scrollToBottom();
+  setTimeout(()=>{
+    const result=processQuery(query);
+    document.getElementById('thinking-row')?.remove();
+    messages.insertAdjacentHTML('beforeend',`
+      <div class="msg-row assistant">
+        <div class="ai-avatar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></div>
+        ${renderResponse(result)}
+      </div>
+    `);
+    scrollToBottom();
+  },180);
+}
+
+loadDatabase();
+</script>
+</body>
+</html>
