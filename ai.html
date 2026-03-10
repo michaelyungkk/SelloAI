@@ -568,9 +568,7 @@ body::before{
 // ── CONFIG ──────────────────────────────────────────────────────
 // Deploy this file on the SAME Netlify domain as your Sello app.
 // For local dev only, replace with your site URL:
-const BASE_URL = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
-  ? 'https://sellouk.netlify.app'
-  : '';
+const BASE_URL = 'https://sellouk.netlify.app';
 
 const ENDPOINTS = {
   snapshot:     `${BASE_URL}/.netlify/functions/db-pull`,
